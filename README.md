@@ -27,6 +27,8 @@ When a MatchLedger customer uploads a statement from an institution we don't yet
 
 The shape mirrors `format_templates` columns in the MatchLedger schema. See [.claude/rules/domain.md](.claude/rules/domain.md) for the full contract.
 
+Alongside the JSON, the tool prints the same data in two paste-ready blocks (one hint per line for the Detection Hints chip input; real-newline prose for the Format Guide textarea) and offers to push either block straight to your system clipboard so you can paste directly into the MatchLedger admin template editor without hand-stripping JSON quotes or `\n` escapes. See [.claude/rules/output-presentation.md](.claude/rules/output-presentation.md).
+
 ## Quickstart
 
 > Tech stack TBD. The repository is currently documentation-only — no implementation has been committed yet. See [CLAUDE.md](CLAUDE.md) for stack guidance and the implementation plan.

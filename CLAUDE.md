@@ -20,6 +20,9 @@ Full validator rules + style guide:
 ## Domain & Output Contract
 @.claude/rules/domain.md
 
+## Output Presentation & Clipboard (paste-into-MatchLedger UX)
+@.claude/rules/output-presentation.md
+
 ## Detection Hints Rules
 @.claude/rules/detection-hints-rules.md
 
