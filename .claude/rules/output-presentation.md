@@ -16,57 +16,82 @@ The formatter must therefore render the same data twice: once as JSON (for machi
 
 ## Required output sections
 
-After Claude returns the JSON, the formatter prints the result in three blocks, in this order:
+After Claude returns the JSON, the formatter prints the result in three blocks, in this order. Each paste-ready block is wrapped between two `===` fence lines so the start and end of the copy-paste region are unmistakable. **The content to copy is everything strictly between the opening and closing fence — never the fence lines themselves, never the commentary lines.**
+
+The fence convention, used for both Block 2 and Block 3:
+
+```
+==================== <BLOCK NAME> (paste-ready) ====================
+<content the user copies>
+==================== END <BLOCK NAME> ====================
+```
+
+The `=` row is a fixed 68 characters wide so blocks visually align in the terminal. Use the exact strings `(paste-ready)` and `END` so the implementation, the user, and downstream tooling can pattern-match the boundaries reliably.
+
+Commentary and meta-notes (character counts, warnings, the "Copy to clipboard?" prompt) ALWAYS appear *outside* the fences — never inside. Anything inside the fences is bytes-for-bytes paste content.
 
 ### Block 1 — JSON (the canonical contract)
+
+This block uses a different, less prominent header because nobody pastes the JSON into MatchLedger directly — it's for machines / archival. No `===` fence needed.
+
 ```
-=== JSON (canonical) ===
+--- JSON (canonical, for piping/storage — NOT for paste into MatchLedger) ---
 {
   "category": "BANK_SOA",
   ...
 }
 ```
-Pretty-printed with 2-space indent for readability, but still a single valid JSON document. This block is what stdout pipes / file output captures.
 
-### Block 2 — Detection Hints (paste-ready)
+Pretty-printed with 2-space indent for readability, single valid JSON document. This block is what stdout pipes / file output captures.
+
+### Block 2 — Detection Hints (paste-ready, fenced)
+
 ```
-=== Detection Hints (paste-ready) ===
+==================== DETECTION HINTS (paste-ready) ====================
 Xendit WHT
 PENDING_SETTLEMENT
 PH_GCASH
 PH_GRABPAY
 EWALLET_PAYMENT
-Channel Reference
-3rd Party WHT
+==================== END DETECTION HINTS ====================
 ```
 
-Rules for this block:
+Rules for the *content between the fences*:
 - One hint per line.
 - No quotes, commas, brackets, or JSON syntax.
 - Trim whitespace on each hint.
-- Empty array → print `(none — Generic template)` so the user isn't confused by silence.
+- Empty array → print the literal string `(none — Generic template)` on a single line between the fences, so the user isn't confused by silence. The fences still appear; the block is never collapsed.
+
+Rules for the *commentary outside the fences*: nothing. Print the next block immediately after the closing fence, separated by one blank line.
 
 This format is friendly for two paste workflows:
 - **Bulk paste** — most browsers + MUI Autocomplete chip inputs accept newline-delimited input and add each line as a chip.
 - **One-by-one** — the admin can also drag-select a single line and paste, repeat for each.
 
-### Block 3 — Format Guide (paste-ready)
+### Block 3 — Format Guide (paste-ready, fenced)
+
 ```
-=== Format Guide (paste-ready) ===
+==================== FORMAT GUIDE (paste-ready) ====================
 This is a Xendit 'Upcoming Transactions Report', a CSV export...
 
 The first row is the column header. Columns in order:
 Product ID | Transaction ID | ...
 
 Date format: the Created Date, Payment Date, and Settlement Date columns print as 'DD MMM YYYY, HH:MM:SS' in Philippine Standard Time...
+==================== END FORMAT GUIDE ====================
+(1487 / 3200 chars — within recommended limit)
 ```
 
-Rules for this block:
+Rules for the *content between the fences*:
 - Real newlines, not `\n` escapes. The admin's `<textarea>` must receive the same line breaks Claude wrote.
 - No surrounding quotes.
-- No leading/trailing blank lines.
+- No leading/trailing blank lines (the fence does the visual separation, not blank lines inside it).
 - Preserve internal blank lines that came from Claude (those are paragraph breaks; the textarea is `whiteSpace: pre-wrap` in MatchLedger).
-- Print the character count beneath the block: `(1487 / 3200 chars — within recommended limit)`. If over 3,200, append a warning line: `(over recommended max — MatchLedger will flag a WARNING on save)`.
+
+Rules for the *commentary outside the fences*:
+- The character count line goes on its own line *after* the closing fence: `(1487 / 3200 chars — within recommended limit)`.
+- If over 3,200 chars, replace with: `(1850 / 3200 chars — over recommended max; MatchLedger will flag a WARNING on save)`.
+- Never inject the count line between the fences. It would land in the user's clipboard if they bulk-select.
 
 ---
 
@@ -133,16 +158,33 @@ Block 2 and Block 3 exist solely to bypass these two sharp edges.
 
 ## Implementation hooks for the formatter
 
-When generating the JSON-to-presentation conversion:
+The clipboard payload (what gets pushed to the OS clipboard or written between the fence lines) is *only* the inner content — never the fence lines themselves. The fences exist solely as visual demarcation in stdout.
 
 ```python
-def render_paste_blocks(result: FormatterResult) -> tuple[str, str]:
-    hints_block = "\n".join(result.detection_hints) if result.detection_hints else "(none — Generic template)"
-    guide_block = result.format_guide  # already real newlines from Claude
-    return hints_block, guide_block
+FENCE_WIDTH = 68
+FENCE_CHAR = "="
+
+def fence(label: str) -> str:
+    inner = f" {label} "
+    pad = (FENCE_WIDTH - len(inner)) // 2
+    return FENCE_CHAR * pad + inner + FENCE_CHAR * (FENCE_WIDTH - pad - len(inner))
+
+def hints_payload(result) -> str:
+    return "\n".join(result.detection_hints) if result.detection_hints else "(none — Generic template)"
+
+def guide_payload(result) -> str:
+    return result.format_guide  # already real newlines from Claude
+
+def print_block(label: str, payload: str) -> None:
+    print(fence(f"{label} (paste-ready)"))
+    print(payload)
+    print(fence(f"END {label}"))
 ```
 
-Pseudocode-equivalent for any language. The point: never pass through `json.dumps` for the human blocks — that's what introduces the escape characters.
+Two invariants the implementation must hold:
+
+1. **Clipboard never receives the fences.** When `--copy hints` or `--copy guide` runs, the value pushed to `pyperclip.copy()` / `clipboardy.write()` is the payload string only — exactly what's between the two fence lines, no leading/trailing newlines added.
+2. **JSON must never round-trip through this path.** Never `json.dumps(format_guide)` to get the paste content — that re-introduces `\n` escapes. The payload comes from the in-memory string the model returned, before serialization.
 
 ---
 
@@ -153,3 +195,5 @@ Pseudocode-equivalent for any language. The point: never pass through `json.dump
 3. **Generic template, empty hints array.** Block 2 prints `(none — Generic template)`, prompt for "Copy Detection Hints?" is skipped.
 4. **Headless environment.** Clipboard prompt-or-flag triggers, library raises, formatter prints the "unavailable" message and exits 0 (not an error).
 5. **`--copy both` ordering.** After the run, the system clipboard contains the hints block (last copy wins). The Format Guide was copied first and overwritten — that's intentional, see flag table above.
+6. **Fences never appear in the clipboard.** Run `--copy guide`, then `pyperclip.paste()` in a separate process — the result must be byte-equal to `result.format_guide`, with no `===` lines, no label header, no character-count line.
+7. **Fence width.** Both opening and closing fence lines are exactly 68 characters wide regardless of label length (label is centered, padded with `=`).
