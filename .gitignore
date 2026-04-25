@@ -13,6 +13,9 @@ Thumbs.db
 *.swp
 *~
 
+# Claude Code per-machine state (session permissions, etc.)
+.claude/settings.local.json
+
 # Logs
 *.log
 
